@@ -252,7 +252,7 @@ impl SystemExecutor for MultiThreadedExecutor {
         // check to see if there was a panic
         let payload = self.panic_payload.get_mut().unwrap();
         if let Some(payload) = payload.take() {
-            std::panic::resume_unwind(payload);
+            // std::panic::resume_unwind(payload);
         }
 
         debug_assert!(state.ready_systems.is_clear());
@@ -645,6 +645,17 @@ impl ExecutorState {
                     }
                 };
             }));
+
+            if res.is_err() {
+                (context.error_handler)(
+                    "system panicked".into(),
+                    ErrorContext::System {
+                        name: system.name(),
+                        last_run: system.get_last_run(),
+                    },
+                );
+            }
+
             context.system_completed(system_index, res, system);
         };
 
