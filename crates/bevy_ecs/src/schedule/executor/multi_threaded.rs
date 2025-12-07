@@ -309,8 +309,8 @@ impl SystemExecutor for MultiThreadedExecutor {
 
         // check to see if there was a panic
         let payload = self.panic_payload.get_mut().unwrap();
-        if let Some(payload) = payload.take() {
-            std::panic::resume_unwind(payload);
+        if let Some(_payload) = payload.take() {
+            // std::panic::resume_unwind(payload);
         }
 
         debug_assert!(state.ready_systems.is_clear());
@@ -349,6 +349,14 @@ impl<'scope, 'env: 'scope, 'sys> Context<'scope, 'env, 'sys> {
                 let mut panic_payload = self.environment.executor.panic_payload.lock().unwrap();
                 *panic_payload = Some(payload);
             }
+
+            (self.error_handler)(
+                "system panicked".into(),
+                ErrorContext::System {
+                    name: system.name(),
+                    last_run: system.get_last_run(),
+                },
+            );
         }
         self.tick_executor();
     }
