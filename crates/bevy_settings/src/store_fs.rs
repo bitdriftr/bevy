@@ -3,6 +3,8 @@ use bevy_platform::dirs::preferences_dir;
 use bevy_tasks::IoTaskPool;
 use std::{fs, path::PathBuf};
 
+use crate::SettingsDirectory;
+
 /// Persistent storage which uses the local filesystem. Settings will be located in the
 /// OS-specific directory for user settings.
 pub(crate) struct SettingsStore {
@@ -14,17 +16,18 @@ impl SettingsStore {
     ///
     /// # Arguments
     /// * `app_name` - The name of the application. See [`crate::SettingsPlugin`] for usage.
-    pub(crate) fn new(app_name: &str) -> Self {
-        Self {
-            base_path: if let Some(base_dir) = preferences_dir() {
-                let prefs_path = base_dir.join(app_name);
-                debug!("Settings path: {:?}", prefs_path);
-                Some(prefs_path)
-            } else {
-                warn!("Could not find user configuration directories");
-                None
-            },
+    pub(crate) fn new(app_name: &str, directory: Option<&SettingsDirectory>) -> Self {
+        let base_path = directory
+            .map(|directory| directory.0.clone())
+            .or_else(|| preferences_dir().map(|base_dir| base_dir.join(app_name)));
+
+        if let Some(base_path) = &base_path {
+            debug!("Settings path: {:?}", base_path);
+        } else {
+            warn!("Could not find user configuration directories");
         }
+
+        Self { base_path }
     }
 
     /// Save a [`toml::Table`] to disk.
@@ -133,5 +136,19 @@ pub(crate) fn decode_toml_file(file: &PathBuf) -> Option<toml::Table> {
     } else {
         // Settings file does not exist yet.
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_directory_uses_platform_preferences() {
+        let store = SettingsStore::new("test_app", None);
+        assert_eq!(
+            store.base_path,
+            preferences_dir().map(|directory| directory.join("test_app"))
+        );
     }
 }
