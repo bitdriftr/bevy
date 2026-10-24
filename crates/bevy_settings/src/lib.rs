@@ -47,10 +47,16 @@ mod store_wasm;
 use bevy_time::{Real, Time, Timer, TimerMode};
 use serde::de::DeserializeSeed;
 #[cfg(not(target_arch = "wasm32"))]
+use std::path::PathBuf;
+#[cfg(not(target_arch = "wasm32"))]
 use store_fs::SettingsStore;
 
 #[cfg(target_arch = "wasm32")]
 use store_wasm::SettingsStore;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Resource, Clone, Debug)]
+pub struct SettingsDirectory(pub PathBuf);
 
 /// Plugin to orchestrate loading and saving settings.
 ///
@@ -144,9 +150,12 @@ impl SettingsPlugin {
 
 impl Plugin for SettingsPlugin {
     fn build(&self, app: &mut App) {
-        let app_name = self.app_name.clone();
         let world = app.world();
         let last_save = world.read_change_tick();
+        #[cfg(not(target_arch = "wasm32"))]
+        let store = SettingsStore::new(&self.app_name, world.get_resource::<SettingsDirectory>());
+        #[cfg(target_arch = "wasm32")]
+        let store = SettingsStore::new(&self.app_name);
 
         // Get the type registry and clone the Arc so we don't have to worry about borrowing.
         let Some(app_types) = world.get_resource::<AppTypeRegistry>() else {
@@ -156,12 +165,12 @@ impl Plugin for SettingsPlugin {
         let types = app_types.read();
 
         let world = app.world_mut();
-        let file_index = build_settings_registry(&app_name, &types, last_save);
+        let file_index = build_settings_registry(store, &types, last_save);
 
         // Now load each of the toml files we discovered, and apply their properties to
         // the resources in the world.
         for (filename, manifest) in file_index.files.iter() {
-            load_settings_file(world, &app_name, filename, manifest, &types);
+            load_settings_file(world, &file_index.store, filename, manifest, &types);
         }
 
         // Cache the index so that we don't have to do it again when saving (and also makes
@@ -262,8 +271,7 @@ struct SettingsFileManifest {
 /// are associated with which resource types.
 #[derive(Resource)]
 struct SettingsFileRegistry {
-    /// App name (from plugin)
-    app_name: String,
+    store: SettingsStore,
 
     /// List of known settings files, determined by scanning reflection registry.
     files: HashMap<&'static str, SettingsFileManifest>,
@@ -350,11 +358,10 @@ fn save_settings(world: &mut World, use_async: bool, force: bool) {
     for (filename, manifest) in registry.files.iter() {
         if force || has_settings_changed(world, manifest) {
             let table = resources_to_toml(world, &types, manifest);
-            let store = SettingsStore::new(&registry.app_name);
             if use_async {
-                store.save_async(filename, table);
+                registry.store.save_async(filename, table);
             } else {
-                store.save(filename, table);
+                registry.store.save(filename, table);
             }
         }
     }
@@ -491,14 +498,14 @@ fn resources_to_toml(
 /// Returns the [`SettingsFileRegistry`] that tracks which resources are associated with
 /// which settings files.
 fn build_settings_registry(
-    app_name: &str,
+    store: SettingsStore,
     types: &TypeRegistry,
     last_save: Tick,
 ) -> SettingsFileRegistry {
     // Build an index that remembers all of the resource types that are to be saved to
     // each individual settings file.
     let mut file_index = SettingsFileRegistry {
-        app_name: app_name.to_string(),
+        store,
         files: HashMap::new(),
         save_timer: Timer::new(Duration::from_secs(1), TimerMode::Once),
     };
@@ -545,13 +552,12 @@ fn build_settings_registry(
 /// Loads a single settings file and applies its values to the world's resources.
 fn load_settings_file(
     world: &mut World,
-    app_name: &str,
+    store: &SettingsStore,
     filename: &str,
     manifest: &SettingsFileManifest,
     types: &TypeRegistry,
 ) {
     // Load the TOML file
-    let store = SettingsStore::new(app_name);
     let toml = store.load(filename);
     if toml.is_none() {
         warn!("Filename {filename}.toml not found");
@@ -741,6 +747,17 @@ mod tests {
     // Required to make proc macros work in bevy itself.
     extern crate self as bevy_settings;
 
+    fn test_store() -> SettingsStore {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            SettingsStore::new("test_app", None)
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            SettingsStore::new("test_app")
+        }
+    }
+
     /// Test resource that uses default settings group name (derived from type name)
     #[derive(Resource, SettingsGroup, Reflect, Default)]
     #[reflect(Resource, SettingsGroup, Default)]
@@ -784,9 +801,7 @@ mod tests {
         let mut types = TypeRegistry::default();
         types.register::<CounterSettings>();
 
-        let registry = build_settings_registry("test_app", &types, Tick::new(0));
-
-        assert_eq!(registry.app_name, "test_app");
+        let registry = build_settings_registry(test_store(), &types, Tick::new(0));
         assert_eq!(registry.files.len(), 1);
         assert!(registry.files.contains_key("settings"));
 
@@ -799,9 +814,7 @@ mod tests {
         let mut types = TypeRegistry::default();
         types.register::<CounterRefreshRateSettings>();
 
-        let registry = build_settings_registry("test_app", &types, Tick::new(0));
-
-        assert_eq!(registry.app_name, "test_app");
+        let registry = build_settings_registry(test_store(), &types, Tick::new(0));
         assert_eq!(registry.files.len(), 1);
         assert!(registry.files.contains_key("settings"));
 
@@ -815,7 +828,7 @@ mod tests {
         types.register::<CounterSettings>();
         types.register::<ExtraCounterSettings>();
 
-        let registry = build_settings_registry("test_app", &types, Tick::new(0));
+        let registry = build_settings_registry(test_store(), &types, Tick::new(0));
 
         // Both resources should be in the same file
         assert_eq!(registry.files.len(), 1);
@@ -832,7 +845,7 @@ mod tests {
         types.register::<CounterSettings>();
         types.register::<AudioSettings>();
 
-        let registry = build_settings_registry("test_app", &types, Tick::new(0));
+        let registry = build_settings_registry(test_store(), &types, Tick::new(0));
 
         // Resources should be in different files
         assert_eq!(registry.files.len(), 2);
@@ -1207,7 +1220,7 @@ mod tests {
 
         // SettingsFileRegistry with a delayed save timer
         world.insert_resource(SettingsFileRegistry {
-            app_name: "test_app".to_string(),
+            store: test_store(),
             files: HashMap::new(),
             save_timer: {
                 let mut timer = Timer::new(Duration::from_millis(500), TimerMode::Once);
