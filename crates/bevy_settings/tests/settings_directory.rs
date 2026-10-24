@@ -1,3 +1,5 @@
+//! Tests for explicitly configured filesystem storage.
+
 #![cfg(not(target_arch = "wasm32"))]
 
 use bevy_app::App;

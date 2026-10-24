@@ -54,9 +54,35 @@ use store_fs::SettingsStore;
 #[cfg(target_arch = "wasm32")]
 use store_wasm::SettingsStore;
 
+/// The filesystem directory used by [`SettingsPlugin`] instead of the platform's
+/// default preferences directory.
+///
+/// Insert this resource before adding [`SettingsPlugin`]. Settings files are stored
+/// directly in this directory, without appending [`SettingsPlugin::app_name`].
+/// Changing or removing this resource after adding the plugin does not change the
+/// storage location.
+///
+/// This is useful on platforms where the application must supply a sandbox directory,
+/// such as iOS and Android, or when the platform has no default preferences directory.
+/// Browser settings continue to use `localStorage`; this resource is only available
+/// on native platforms.
+///
+/// ```
+/// # #[cfg(not(target_arch = "wasm32"))] {
+/// use bevy_app::App;
+/// use bevy_settings::{SettingsDirectory, SettingsPlugin};
+///
+/// App::new()
+///     .insert_resource(SettingsDirectory("path/to/settings".into()))
+///     .add_plugins(SettingsPlugin::new("com.example.myapp"));
+/// # }
+/// ```
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Resource, Clone, Debug)]
-pub struct SettingsDirectory(pub PathBuf);
+pub struct SettingsDirectory(
+    /// The exact directory containing the settings files.
+    pub PathBuf,
+);
 
 /// Plugin to orchestrate loading and saving settings.
 ///
@@ -91,6 +117,11 @@ pub struct SettingsDirectory(pub PathBuf);
 /// - Linux: `~/.config/com.example.myapp/settings.toml` (or under `$XDG_CONFIG_HOME` when set)
 /// - macOS: `~/Library/Preferences/com.example.myapp/settings.toml`
 /// - Windows: `%LocalAppData%\com.example.myapp\settings.toml`
+///
+/// On native platforms, insert a `SettingsDirectory` resource before adding this plugin
+/// to override the storage directory. Files are then written directly to that directory,
+/// without an additional app-name subdirectory. The directory is resolved when the
+/// plugin is added and is reused for loading and all subsequent saves.
 ///
 /// On `wasm32`, settings are stored in browser `localStorage` under the key
 /// `{app_name}-{filename}` as a TOML string.
@@ -271,6 +302,7 @@ struct SettingsFileManifest {
 /// are associated with which resource types.
 #[derive(Resource)]
 struct SettingsFileRegistry {
+    /// Storage location resolved when the plugin was added.
     store: SettingsStore,
 
     /// List of known settings files, determined by scanning reflection registry.

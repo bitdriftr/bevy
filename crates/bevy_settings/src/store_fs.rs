@@ -16,6 +16,7 @@ impl SettingsStore {
     ///
     /// # Arguments
     /// * `app_name` - The name of the application. See [`crate::SettingsPlugin`] for usage.
+    /// * `directory` - An optional exact storage directory supplied by the application.
     pub(crate) fn new(app_name: &str, directory: Option<&SettingsDirectory>) -> Self {
         let base_path = directory
             .map(|directory| directory.0.clone())
